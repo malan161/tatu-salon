@@ -47,32 +47,51 @@ app.post('/api/admin/verify', (req, res) => {
   res.json({ valid: false });
 });
 
+// Client messages — filter by clientId so each client sees only their own
 app.get('/api/messages', (req, res) => {
+  const msgs = readMessages();
+  const clientId = req.query.clientId;
+  if (clientId) {
+    const filtered = msgs.filter(m => m.clientId === clientId);
+    return res.json(filtered);
+  }
+  res.json([]);
+});
+
+// Admin messages — all messages, requires token
+app.get('/api/admin/messages', (req, res) => {
+  const token = req.headers['x-admin-token'];
+  if (!token || !adminTokens.has(token)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
   res.json(readMessages());
 });
 
-app.post('/api/messages', (req, res) => {
-  const msgs = readMessages();
-  const msg = {
-    id: Date.now() + Math.random().toString(36).slice(2, 6),
-    name: req.body.name || 'Клиент',
-    message: req.body.message,
-    isAdmin: req.body.isAdmin ? 1 : 0,
-    timestamp: new Date().toISOString()
-  };
-  msgs.push(msg);
-  writeMessages(msgs);
-  res.json(msg);
+// Admin messages by clientId
+app.get('/api/admin/messages/:clientId', (req, res) => {
+  const token = req.headers['x-admin-token'];
+  if (!token || !adminTokens.has(token)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  const msgs = readMessages().filter(m => m.clientId === req.params.clientId);
+  res.json(msgs);
 });
 
-// Track authenticated admin sockets
 const adminSockets = new Set();
 
 io.on('connection', (socket) => {
+  // Client registers with their clientId
+  socket.on('register', (clientId) => {
+    if (clientId) {
+      socket.join('client:' + clientId);
+    }
+  });
+
   // Admin authenticates their socket
   socket.on('adminAuth', (token) => {
     if (adminTokens.has(token)) {
       adminSockets.add(socket.id);
+      socket.join('admin');
       socket.emit('adminAuthResult', { success: true });
     } else {
       socket.emit('adminAuthResult', { success: false });
@@ -80,22 +99,33 @@ io.on('connection', (socket) => {
   });
 
   socket.on('sendMessage', (data) => {
-    // Only allow admin messages from authenticated admin sockets
+    const isAdmin = data.isAdmin && adminSockets.has(socket.id);
+
     if (data.isAdmin && !adminSockets.has(socket.id)) {
       return;
     }
 
     const msgs = readMessages();
     const newMsg = {
-      id: Date.now() + Math.random().toString(36).slice(2, 6),
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      clientId: isAdmin ? data.clientId : (data.clientId || 'unknown'),
       name: data.name || 'Клиент',
       message: data.message,
-      isAdmin: data.isAdmin ? 1 : 0,
+      isAdmin: isAdmin ? 1 : 0,
       timestamp: new Date().toISOString()
     };
     msgs.push(newMsg);
     writeMessages(msgs);
-    io.emit('newMessage', newMsg);
+
+    if (isAdmin) {
+      // Admin reply — send only to that client and admin room
+      io.to('client:' + data.clientId).emit('newMessage', newMsg);
+      io.to('admin').emit('newMessage', newMsg);
+    } else {
+      // Client message — send to the client and all admins
+      io.to('client:' + data.clientId).emit('newMessage', newMsg);
+      io.to('admin').emit('newMessage', newMsg);
+    }
   });
 
   socket.on('disconnect', () => {

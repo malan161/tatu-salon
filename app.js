@@ -1,26 +1,40 @@
-let socket;
+function getClientId() {
+  var id = sessionStorage.getItem('bl_client_id');
+  if (!id) {
+    id = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    sessionStorage.setItem('bl_client_id', id);
+  }
+  return id;
+}
+
+var clientId = getClientId();
+
+var socket;
 try {
   socket = io();
 } catch(e) {
   socket = { emit: function() {}, on: function() {} };
 }
 
+// Register with server
+socket.emit('register', clientId);
+
 // DOM - Floating widget
-const chatBtn = document.getElementById('chatBtn');
-const chatWindow = document.getElementById('chatWindow');
-const chatClose = document.getElementById('chatClose');
-const chatMessages = document.getElementById('chatMessages');
-const chatInput = document.getElementById('chatInput');
-const chatSend = document.getElementById('chatSend');
+var chatBtn = document.getElementById('chatBtn');
+var chatWindow = document.getElementById('chatWindow');
+var chatClose = document.getElementById('chatClose');
+var chatMessages = document.getElementById('chatMessages');
+var chatInput = document.getElementById('chatInput');
+var chatSend = document.getElementById('chatSend');
 
 // DOM - Section chat
-const chatMessagesSection = document.getElementById('chatMessagesSection');
-const chatInputSection = document.getElementById('chatInputSection');
-const chatSendSection = document.getElementById('chatSendSection');
+var chatMessagesSection = document.getElementById('chatMessagesSection');
+var chatInputSection = document.getElementById('chatInputSection');
+var chatSendSection = document.getElementById('chatSendSection');
 
 // DOM - Nav
-const navToggle = document.getElementById('navToggle');
-const navLinks = document.getElementById('navLinks');
+var navToggle = document.getElementById('navToggle');
+var navLinks = document.getElementById('navLinks');
 
 // NAV TOGGLE
 navToggle.addEventListener('click', function() {
@@ -85,7 +99,7 @@ function renderToAll(data) {
 function sendMessage() {
   var text = chatInput.value.trim();
   if (!text) return;
-  socket.emit('sendMessage', { name: 'Клиент', message: text, isAdmin: false });
+  socket.emit('sendMessage', { name: 'Клиент', message: text, isAdmin: false, clientId: clientId });
   chatInput.value = '';
 }
 
@@ -102,7 +116,7 @@ if (chatInput) {
 function sendMessageSection() {
   var text = chatInputSection.value.trim();
   if (!text) return;
-  socket.emit('sendMessage', { name: 'Клиент', message: text, isAdmin: false });
+  socket.emit('sendMessage', { name: 'Клиент', message: text, isAdmin: false, clientId: clientId });
   chatInputSection.value = '';
 }
 
@@ -120,22 +134,20 @@ document.querySelectorAll('.faq-question').forEach(function(btn) {
   btn.addEventListener('click', function() {
     var item = this.parentElement;
     var isActive = item.classList.contains('active');
-    // Close all
     document.querySelectorAll('.faq-item').forEach(function(el) {
       el.classList.remove('active');
     });
-    // Open clicked
     if (!isActive) {
       item.classList.add('active');
     }
   });
 });
 
-// INCOMING MESSAGES
+// INCOMING MESSAGES — only our own + admin replies come through
 socket.on('newMessage', renderToAll);
 
-// LOAD HISTORY
-fetch('/api/messages')
+// LOAD HISTORY — fetch only this client's messages
+fetch('/api/messages?clientId=' + encodeURIComponent(clientId))
   .then(function(r) { return r.json(); })
   .then(function(msgs) {
     if (chatMessages) chatMessages.innerHTML = '';
